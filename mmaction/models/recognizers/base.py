@@ -174,7 +174,10 @@ class BaseRecognizer(BaseModel, metaclass=ABCMeta):
         # loss_aux will be a empty dict if `self.with_neck` is False.
         loss_aux = loss_kwargs.get('loss_aux', dict())
         loss_cls = self.cls_head.loss(feats, data_samples, **loss_kwargs)
-        losses = merge_dict(loss_cls, loss_aux)
+        # losses = merge_dict(loss_cls, loss_aux)
+        losses = dict()
+        losses.update(loss_cls)
+        losses.update(loss_aux)
         return losses
 
     def predict(self, inputs: torch.Tensor, data_samples: SampleList,
