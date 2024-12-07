@@ -1,14 +1,10 @@
 _base_ = '../../_base_/default_runtime.py'
 
-# 'mamba_features=184' if we use Knowair dataset;
-# 'mamba_features=307' if we use PEMS04 datastet;
-# 'mamba_features=80' if we use HZ_Metro dataset;
-
 model = dict(
     type='RecognizerGCN',
     backbone=dict(
-        type='KFGN_Mamba', graph_cfg=dict(layout='coco', mode='stgcn_spatial'), d_model=160, features=80),
-    cls_head=dict(type='GCNHead', num_classes=60, in_channels=256))
+        type='StoneMamba', graph_cfg=dict(layout='coco', mode='stgcn_spatial')),
+    cls_head=dict(type='GCNHead', num_classes=60, in_channels=272))
 
 dataset_type = 'PoseDataset'
 ann_file = 'data/skeleton/ntu60_2d.pkl'
@@ -41,7 +37,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=16,
+    batch_size=32,
     num_workers=2,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -54,7 +50,7 @@ train_dataloader = dict(
             pipeline=train_pipeline,
             split='xsub_train')))
 val_dataloader = dict(
-    batch_size=16,
+    batch_size=32,
     num_workers=2,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -95,12 +91,12 @@ param_scheduler = [
 
 optim_wrapper = dict(
     optimizer=dict(
-        type='SGD', lr=0.1, momentum=0.9, weight_decay=0.0005, nesterov=True))
+        type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0005, nesterov=True))
 
 default_hooks = dict(checkpoint=dict(interval=1), logger=dict(interval=100))
 
 # Default setting for scaling LR automatically
 #   - `enable` means enable scaling LR automatically
 #       or not by default.
-#   - `base_batch_size` = (8 GPUs) x (16 samples per GPU).
+#   - `base_batch_size` = (4 GPUs) x (32 samples per GPU).
 auto_scale_lr = dict(enable=False, base_batch_size=128)
