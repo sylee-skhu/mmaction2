@@ -3,7 +3,8 @@ _base_ = '../../_base_/default_runtime.py'
 model = dict(
     type='RecognizerGCN',
     backbone=dict(
-        type='StoneMamba', graph_cfg=dict(layout='coco', mode='stgcn_spatial')),
+        type='StoneMamba', graph_cfg=dict(layout='coco', mode='stgcn_spatial'),
+        n_layers=6),
     cls_head=dict(type='GCNHead', num_classes=60, in_channels=272))
 
 dataset_type = 'PoseDataset'
@@ -43,7 +44,7 @@ train_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dict(
         type='RepeatDataset',
-        times=5,
+        times=10,
         dataset=dict(
             type=dataset_type,
             ann_file=ann_file,
@@ -76,7 +77,7 @@ val_evaluator = [dict(type='AccMetric')]
 test_evaluator = val_evaluator
 
 train_cfg = dict(
-    type='EpochBasedTrainLoop', max_epochs=16, val_begin=1, val_interval=1)
+    type='EpochBasedTrainLoop', max_epochs=24, val_begin=1, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -84,14 +85,15 @@ param_scheduler = [
     dict(
         type='CosineAnnealingLR',
         eta_min=0,
-        T_max=16,
+        T_max=24,
         by_epoch=True,
         convert_to_iter_based=True)
 ]
 
 optim_wrapper = dict(
     optimizer=dict(
-        type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0005, nesterov=True))
+        type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005),
+        clip_grad=dict(max_norm=40, norm_type=2))
 
 default_hooks = dict(checkpoint=dict(interval=1), logger=dict(interval=100))
 

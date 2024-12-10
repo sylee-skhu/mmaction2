@@ -16,8 +16,7 @@ from ..utils import Graph, unit_gcn, mstcn, unit_tcn
 @dataclass
 class ModelArgs:
     n_layer: int
-    d_model_base: int
-    num_joint: int
+    d_model: int
     d_state: int = 16
     expand: int = 2
     dt_rank: Union[int, str] = 'auto'
@@ -27,7 +26,6 @@ class ModelArgs:
     
     
     def __post_init__(self):
-        self.d_model = int(self.num_joint * self.d_model_base)
         self.d_inner = int(self.expand * self.d_model)
         
         if self.dt_rank == 'auto':
@@ -52,14 +50,15 @@ class StoneMamba(BaseModule):
         self.graph = Graph(**graph_cfg)
         A = torch.tensor(self.graph.A, dtype=torch.float32, requires_grad=False)
         self.register_buffer('A', A)
+        num_joint=A.size(1)
 
-        args = ModelArgs(d_model_base=d_model_base, n_layer=n_layers, num_joint=A.size(1))
+        args = ModelArgs(d_model=d_model_base*num_joint, n_layer=n_layers)
 
         self.data_bn_type = data_bn_type
         if data_bn_type == 'MVC':
-            self.data_bn = nn.BatchNorm1d(num_person * in_channels * A.size(1))
+            self.data_bn = nn.BatchNorm1d(num_person * in_channels * num_joint)
         elif data_bn_type == 'VC':
-            self.data_bn = nn.BatchNorm1d(in_channels * A.size(1))
+            self.data_bn = nn.BatchNorm1d(in_channels * num_joint)
         else:
             self.data_bn = nn.Identity()
 
@@ -71,6 +70,11 @@ class StoneMamba(BaseModule):
         self.relu = nn.ReLU()
 
         self.layers = nn.ModuleList([ResidualBlock(args) for _ in range(args.n_layer)])
+
+        args2 = ModelArgs(d_model=args.d_model_base*100, n_layer=2)
+        self.layers2 = nn.ModuleList([ResidualBlock(args) for _ in range(4)])
+
+
         self.norm = RMSNorm(args.d_model)
 
     def forward(self, x):
