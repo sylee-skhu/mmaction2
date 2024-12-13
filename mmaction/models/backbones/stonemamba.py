@@ -62,19 +62,14 @@ class StoneMamba(BaseModule):
         else:
             self.data_bn = nn.Identity()
 
-        self.gcn = unit_gcn(in_channels, args.d_model_base, A.clone())
+        self.gcn = unit_gcn(in_channels, d_model_base, A.clone())
         if tcn_type == 'mstcn':
-            self.tcn = mstcn(args.d_model_base, args.d_model_base)
+            self.tcn = mstcn(d_model_base, d_model_base)
         else:
-            self.tcn = unit_tcn(args.d_model_base, args.d_model_base)
+            self.tcn = unit_tcn(d_model_base, d_model_base)
         self.relu = nn.ReLU()
 
         self.layers = nn.ModuleList([ResidualBlock(args) for _ in range(args.n_layer)])
-
-        args2 = ModelArgs(d_model=args.d_model_base*100, n_layer=2)
-        self.layers2 = nn.ModuleList([ResidualBlock(args) for _ in range(4)])
-
-
         self.norm = RMSNorm(args.d_model)
 
     def forward(self, x):
