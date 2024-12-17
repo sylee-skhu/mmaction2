@@ -20,7 +20,7 @@ class ModelArgs:
     d_state: int = 16
     expand: int = 2
     dt_rank: Union[int, str] = 'auto'
-    d_conv: int = 4 
+    d_conv: int = 3
     conv_bias: bool = True
     bias: bool = False
     
@@ -140,26 +140,35 @@ class MambaBlock(nn.Module):
         super().__init__()
         self.args = args
 
-        self.in_proj = nn.Linear(args.d_model, args.d_inner * 2, bias=args.bias)
+        self.in_proj = nn.Linear(args.d_model, args.d_inner, bias=args.bias)
 
-        self.conv1d = nn.Conv1d(
-            in_channels=args.d_inner,
-            out_channels=args.d_inner,
+        self.conv1d_x = nn.Conv1d(
+            in_channels=args.d_inner//2,
+            out_channels=args.d_inner//2,
             bias=args.conv_bias,
             kernel_size=args.d_conv,
-            groups=args.d_inner,
-            padding=args.d_conv - 1,
+            groups=args.d_inner//2,
+            padding=1
         )
-
+        self.conv1d_z = nn.Conv1d(
+            in_channels=args.d_inner//2,
+            out_channels=args.d_inner//2,
+            bias=args.conv_bias,
+            kernel_size=args.d_conv,
+            groups=args.d_inner//2,
+            padding=1
+        )
         # x_proj takes in `x` and outputs the input-specific Δ, B, C
-        self.x_proj = nn.Linear(args.d_inner, args.dt_rank + args.d_state * 2, bias=False)
+        self.x_proj = nn.Linear(args.d_inner//2, args.dt_rank + args.d_state * 2, bias=False)
         
         # dt_proj projects Δ from dt_rank to d_in
-        self.dt_proj = nn.Linear(args.dt_rank, args.d_inner, bias=True)
+        self.dt_proj = nn.Linear(args.dt_rank, args.d_inner//2, bias=True)
 
-        A = repeat(torch.arange(1, args.d_state + 1), 'n -> d n', d=args.d_inner)
+        A = repeat(torch.arange(1, args.d_state + 1), 'n -> d n', d=args.d_inner//2)
         self.A_log = nn.Parameter(torch.log(A))
-        self.D = nn.Parameter(torch.ones(args.d_inner))
+        self.A_log._no_weight_decay = True
+        self.D = nn.Parameter(torch.ones(args.d_inner//2))
+        self.D._no_weight_decay = True
         self.out_proj = nn.Linear(args.d_inner, args.d_model, bias=args.bias)
         
 
@@ -179,18 +188,20 @@ class MambaBlock(nn.Module):
         """
         (b, l, d) = x.shape
         
-        x_and_res = self.in_proj(x)  # shape (b, l, 2 * d_in)
-        (x, res) = x_and_res.split(split_size=[self.args.d_inner, self.args.d_inner], dim=-1)
+        xz = self.in_proj(x)  # shape (b, l, 2 * d_in)
+        xz = rearrange(xz, 'b l d_in -> b d_in l')
+        x, z = xz.chunk(2, dim=1)
 
-        x = rearrange(x, 'b l d_in -> b d_in l')
-        x = self.conv1d(x)[:, :, :l]
+        # x: shape (b, d_in, l)
+
+        x = F.silu(self.conv1d_x(x))
         x = rearrange(x, 'b d_in l -> b l d_in')
-        
-        x = F.silu(x)
 
-        y = self.ssm(x)
+        z = F.silu(self.conv1d_z(z))
+        z = rearrange(z, 'b d_in l -> b l d_in')
         
-        y = y * F.silu(res)
+        y = self.ssm(x)
+        y = torch.cat([y, z], dim=2)
         
         output = self.out_proj(y)
 
