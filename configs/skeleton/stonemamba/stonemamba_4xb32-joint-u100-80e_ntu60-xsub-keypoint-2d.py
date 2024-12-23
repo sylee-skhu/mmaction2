@@ -3,17 +3,18 @@ _base_ = '../../_base_/default_runtime.py'
 model = dict(
     type='RecognizerGCN',
     backbone=dict(
-        type='StoneMamba', graph_cfg=dict(layout='coco', mode='stgcn_spatial'),
-        n_layers=6,
-        d_model_base=32),
-    cls_head=dict(type='GCNHead', num_classes=60, in_channels=544))
+        type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
+        d_model_base=80,
+        num_joint=25,
+        num_frame=64),
+    cls_head=dict(type='GCNHead', num_classes=60, in_channels=320))
 
 dataset_type = 'PoseDataset'
 ann_file = 'data/skeleton/ntu60_2d.pkl'
 train_pipeline = [
     dict(type='PreNormalize2D'),
     dict(type='GenSkeFeat', dataset='coco', feats=['j']),
-    dict(type='UniformSampleFrames', clip_len=100),
+    dict(type='UniformSampleFrames', clip_len=64),
     dict(type='PoseDecode'),
     dict(type='FormatGCNInput', num_person=2),
     dict(type='PackActionInputs')
@@ -22,7 +23,7 @@ val_pipeline = [
     dict(type='PreNormalize2D'),
     dict(type='GenSkeFeat', dataset='coco', feats=['j']),
     dict(
-        type='UniformSampleFrames', clip_len=100, num_clips=1, test_mode=True),
+        type='UniformSampleFrames', clip_len=64, num_clips=1, test_mode=True),
     dict(type='PoseDecode'),
     dict(type='FormatGCNInput', num_person=2),
     dict(type='PackActionInputs')
@@ -31,7 +32,7 @@ test_pipeline = [
     dict(type='PreNormalize2D'),
     dict(type='GenSkeFeat', dataset='coco', feats=['j']),
     dict(
-        type='UniformSampleFrames', clip_len=100, num_clips=10,
+        type='UniformSampleFrames', clip_len=64, num_clips=10,
         test_mode=True),
     dict(type='PoseDecode'),
     dict(type='FormatGCNInput', num_person=2),
@@ -45,7 +46,7 @@ train_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dict(
         type='RepeatDataset',
-        times=10,
+        times=5,
         dataset=dict(
             type=dataset_type,
             ann_file=ann_file,
@@ -78,7 +79,7 @@ val_evaluator = [dict(type='AccMetric')]
 test_evaluator = val_evaluator
 
 train_cfg = dict(
-    type='EpochBasedTrainLoop', max_epochs=24, val_begin=1, val_interval=1)
+    type='EpochBasedTrainLoop', max_epochs=16, val_begin=1, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -86,7 +87,7 @@ param_scheduler = [
     dict(
         type='CosineAnnealingLR',
         eta_min=0,
-        T_max=24,
+        T_max=16,
         by_epoch=True,
         convert_to_iter_based=True)
 ]
