@@ -4,24 +4,24 @@ model = dict(
     type='RecognizerGCN',
     backbone=dict(
         type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
-        d_model_base=80,
+        d_model_base=64,
         num_joint=25,
         num_frame=64),
-    cls_head=dict(type='GCNHead', num_classes=60, in_channels=320))
+    cls_head=dict(type='GCNHead', num_classes=60, in_channels=256))
 
 dataset_type = 'PoseDataset'
-ann_file = 'data/skeleton/ntu60_2d.pkl'
+ann_file = 'data/skeleton/ntu60_3d.pkl'
 train_pipeline = [
-    dict(type='PreNormalize2D'),
-    dict(type='GenSkeFeat', dataset='coco', feats=['j']),
+    dict(type='PreNormalize3D'),
+    dict(type='GenSkeFeat', dataset='nturgb+d', feats=['j']),
     dict(type='UniformSampleFrames', clip_len=64),
     dict(type='PoseDecode'),
     dict(type='FormatGCNInput', num_person=2),
     dict(type='PackActionInputs')
 ]
 val_pipeline = [
-    dict(type='PreNormalize2D'),
-    dict(type='GenSkeFeat', dataset='coco', feats=['j']),
+    dict(type='PreNormalize3D'),
+    dict(type='GenSkeFeat', dataset='nturgb+d', feats=['j']),
     dict(
         type='UniformSampleFrames', clip_len=64, num_clips=1, test_mode=True),
     dict(type='PoseDecode'),
@@ -29,8 +29,8 @@ val_pipeline = [
     dict(type='PackActionInputs')
 ]
 test_pipeline = [
-    dict(type='PreNormalize2D'),
-    dict(type='GenSkeFeat', dataset='coco', feats=['j']),
+    dict(type='PreNormalize3D'),
+    dict(type='GenSkeFeat', dataset='nturgb+d', feats=['j']),
     dict(
         type='UniformSampleFrames', clip_len=64, num_clips=10,
         test_mode=True),
@@ -104,3 +104,4 @@ default_hooks = dict(checkpoint=dict(interval=1), logger=dict(interval=100))
 #       or not by default.
 #   - `base_batch_size` = (4 GPUs) x (32 samples per GPU).
 auto_scale_lr = dict(enable=False, base_batch_size=128)
+find_unused_parameters = True

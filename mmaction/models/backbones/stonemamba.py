@@ -22,9 +22,8 @@ def import_class(name):
 
 @dataclass
 class ModelArgs:
-    d_model_base: int
+    d_model: int
     d_state: int = 16
-    num_joint: int = 25
     expand: int = 2
     dt_rank: Union[int, str] = 'auto'
     d_conv: int = 3
@@ -33,9 +32,7 @@ class ModelArgs:
     
     
     def __post_init__(self):
-        self.d_model = self.d_model_base
         self.d_inner = int(self.expand * self.d_model)
-
         
         if self.dt_rank == 'auto':
             self.dt_rank = math.ceil(self.d_model / 16)
@@ -50,7 +47,7 @@ class StoneMamba(BaseModule):
                  num_person: int = 2,
                  num_joint: int = 25,
                  num_frame: int = 64,
-                 d_model_base: int = 16,
+                 d_model_base: int = 80,
                  init_cfg: Optional[Union[Dict, List[Dict]]] = None,
                  **kwargs) -> None:
         super().__init__(init_cfg=init_cfg)
@@ -63,9 +60,6 @@ class StoneMamba(BaseModule):
         I = np.eye(self.graph.num_node)
         self.A_vector = torch.from_numpy(I - np.linalg.matrix_power(A_outward, 8))     
 
-        # Model Arguments
-        self.args = ModelArgs(d_model_base=d_model_base, num_joint=num_joint)
-
         # Data Normalization
         self.data_bn = nn.BatchNorm1d(num_person * d_model_base * num_joint)
         nn.init.constant(self.data_bn.weight, 1)
@@ -73,7 +67,7 @@ class StoneMamba(BaseModule):
 
         # Embedding        
         self.to_joint_embedding = nn.Linear(in_channels, d_model_base)
-        self.pos_embedding = nn.Parameter(torch.randn(1, self.num_joint, d_model_base))
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_joint, d_model_base))
 
         self.l1 = ResidualBlock(d_model_base, d_model_base, A, num_frame, residual=False)
         self.l2 = ResidualBlock(d_model_base, d_model_base, A, num_frame)
@@ -101,11 +95,10 @@ class StoneMamba(BaseModule):
 
     def forward(self, x):
         N, M, T, V, C = x.size()
-        x = rearrange(x, 'n c t v m -> (n m t) v c', m=M, v=V).contiguous()
+        x = rearrange(x, 'n m t v c -> (n m t) v c').contiguous()
 
-        p = self.A_vector
-        p = torch.tensor(p,dtype=torch.float)
-        x = p.to(x.device).expand(N*M*T, -1, -1) @ x
+        p = self.A_vector.to(x.device).expand(N*M*T, -1, -1)
+        x = p @ x   
 
         x = self.to_joint_embedding(x)
         x += self.pos_embedding[:, :V]
@@ -138,14 +131,13 @@ class StoneMamba(BaseModule):
 
     
 class ResidualBlock(nn.Module):
-    def __init__(self, args: ModelArgs, in_channels, out_channels, A, num_frame, stride=1, residual=True):
+    def __init__(self, in_channels, out_channels, A, num_frame, stride=1, residual=True):
         """Simple block wrapping Mamba block with normalization and residual connection."""
         super().__init__()
-        self.args = args
-
-        self.mixer = MambaBlock(args)
-        self.norm = RMSNorm(in_channels)
-        self.shift = ShiftModule(in_channels, A, num_frame, stride)
+        
+        self.mixer = MambaBlock(ModelArgs(d_model=out_channels))
+        self.norm = RMSNorm(out_channels)
+        self.shift = ShiftModule(in_channels, out_channels, A, num_frame, stride)
 
         self.relu = nn.ReLU()
 
@@ -166,46 +158,43 @@ class ResidualBlock(nn.Module):
             Tensor of shape (N, C, T, V)
         """
 
-        self.tsm()
+        x0 = self.shift(x)
+        N, C, T, V = x0.size()
 
-        N, C, T, V = x.size()
-        x = self.shift(x)
-        x = x.rearrange('n c t v -> (n t) v c')
+        out = rearrange(x0, 'n c t v -> (n t) v c')
+        out = self.mixer(self.norm(out))
+        out = rearrange(out, '(n t) v c -> n c t v', n=N, t=T)
 
-        x = self.mixer(self.norm(x)) + self.residual(x)  # Pass through MambaBlock with residual connection
+        out = out + self.residual(x)
+        out = self.relu(out)
 
-        x = self.relu(x)
-
-        x = x.rearrange('(n t) v c -> n c t v', n=N, t=T)
-
-        return 
+        return out
     
 class ShiftModule(nn.Module):
-    def __init__(self, in_channels, A, num_frame, stride=1, div=4, num_subset=3, groups=8):
+    def __init__(self, in_channels, out_channels, A, num_frame, stride=1, div=4, num_subset=3, groups=8):
         super(ShiftModule, self).__init__()
-        fold = in_channels // div
+        fold = out_channels // div
         num_joint = A.shape[-1]
 
 
         self.attention_pre = SpatialAttention(fold, num_joint)
         self.attention_post = SpatialAttention(fold, num_joint)
-        self.attention_no = SpatialAttention(in_channels - 2*fold, num_joint)
+        self.attention_no = SpatialAttention(out_channels - 2*fold, num_joint)
 
         self.A_GEME = nn.Parameter(torch.tensor(np.reshape(A.astype(np.float32),[3,1,num_joint,num_joint]), dtype=torch.float32, requires_grad=True).repeat(1,groups,1,1), requires_grad=True)
-        # self.A_GEME : 3x8x25x25 learnable
         self.A_SE = Variable(torch.from_numpy(np.reshape(A.astype(np.float32),[3,1,num_joint,num_joint]).repeat(groups,axis=1)), requires_grad=False) 
-        # self.A_SE : 3x8x25x25 but not learnable
-        self.A = nn.Parameter(torch.from_numpy(A), requires_grad=False)
         self.stride = stride
         self.num_frame = num_frame
 
         self.in_channels = in_channels
+        self.out_channels = out_channels
         self.div= div
         self.num_subset = num_subset
         self.groups = groups
+        self.num_joint = num_joint
         self.conv = nn.Conv2d(
             in_channels,
-            in_channels * num_subset,
+            out_channels * num_subset,
             kernel_size=(1, 1),
             padding=(0, 0),
             stride=(stride, 1),
@@ -217,8 +206,10 @@ class ShiftModule(nn.Module):
         N, C, T, V = x.size()
 
         A = self.A_SE.cuda(x.get_device()) + self.A_GEME
-        norm_learn_A = A.repeat(1,self.in_channels//self.groups,1,1)  
-        A_final=torch.zeros([N,self.num_subset,self.in_channels,25,25],dtype=torch.float,device='cuda').detach()        
+        # # A = self.A_SE.cuda(x.get_device())
+        # A = self.A_GEME
+        norm_learn_A = A.repeat(1,self.out_channels//self.groups,1,1)  
+        A_final=torch.zeros([N,self.num_subset,self.out_channels, self.num_joint, self.num_joint],dtype=torch.float,device='cuda').detach()        
 
         
         fold = C // self.div
@@ -230,7 +221,7 @@ class ShiftModule(nn.Module):
 
         out = self.conv(out)
         N, C, T, V = out.size()
-        out.view(N, self.num_subset, C // self.num_subset, T, V)
+        out = out.view(N, self.num_subset, C // self.num_subset, T, V)
         for i in range(self.num_subset):
             attn_pre, _, _ = self.attention_pre(out[:, i, :fold, :, :])
             attn_post, _, _ = self.attention_post(out[:, i, fold:2*fold, :, :])
