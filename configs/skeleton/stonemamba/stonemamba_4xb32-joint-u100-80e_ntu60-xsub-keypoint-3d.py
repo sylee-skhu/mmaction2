@@ -5,7 +5,7 @@ model = dict(
     backbone=dict(
         type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
         d_model_base=16),
-    cls_head=dict(type='GCNHead', num_classes=60, in_channels=256))
+    cls_head=dict(type='GCNHead', num_classes=60, in_channels=1600))
 
 dataset_type = 'PoseDataset'
 ann_file = 'data/skeleton/ntu60_3d.pkl'
@@ -102,4 +102,4 @@ default_hooks = dict(checkpoint=dict(interval=1), logger=dict(interval=100))
 #       or not by default.
 #   - `base_batch_size` = (4 GPUs) x (32 samples per GPU).
 auto_scale_lr = dict(enable=False, base_batch_size=128)
-find_unused_parameters = True
+# find_unused_parameters = True

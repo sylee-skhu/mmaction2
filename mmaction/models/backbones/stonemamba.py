@@ -117,7 +117,9 @@ class StoneMamba(BaseModule):
         x3 = self.second_tram(x3)
         x = x + x2 + x3
 
-        x = x.view((N, M) + x.shape[1:])
+        x = rearrange(x, '(n m) c t v -> n m (v c) t', m=M).contiguous()
+
+        x = x.view(x.shape + (1,))
         
         return x
     
@@ -138,7 +140,7 @@ class ResidualBlock(nn.Module):
             self.residual = unit_skip(in_channels, out_channels, kernel_size=1, stride=stride)
 
         if stride == 1:
-            self.t_down = lambda x: nn.Identity()
+            self.t_down = nn.Identity()
         else:
             self.t_down = nn.AvgPool2d((stride, 1))
         
@@ -160,7 +162,6 @@ class ResidualBlock(nn.Module):
         x = rearrange(x, 'n c t v -> n t (v c)')
         x = self.mixer(self.norm(x))
         x = rearrange(x, 'n t (v c) -> n c t v', v=V, c=C)
-        print(x.size(), res1.size(), res2.size())
         x = x + res1 + res2
         return x
 
