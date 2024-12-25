@@ -4,9 +4,7 @@ model = dict(
     type='RecognizerGCN',
     backbone=dict(
         type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
-        d_model_base=64,
-        num_joint=25,
-        num_frame=64),
+        d_model_base=16),
     cls_head=dict(type='GCNHead', num_classes=60, in_channels=256))
 
 dataset_type = 'PoseDataset'

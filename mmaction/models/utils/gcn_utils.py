@@ -37,6 +37,7 @@ class unit_gcn(BaseModule):
                  with_res: bool = False,
                  norm: str = 'BN',
                  act: str = 'ReLU',
+                 stride: int = 1,
                  init_cfg: Optional[Union[Dict, List[Dict]]] = None) -> None:
         super().__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
@@ -67,14 +68,14 @@ class unit_gcn(BaseModule):
                 nn.init.constant_(self.PA, 1)
 
         if self.conv_pos == 'pre':
-            self.conv = nn.Conv2d(in_channels, out_channels * A.size(0), 1)
+            self.conv = nn.Conv2d(in_channels, out_channels * A.size(0), (stride, 1))
         elif self.conv_pos == 'post':
             self.conv = nn.Conv2d(A.size(0) * in_channels, out_channels, 1)
 
         if self.with_res:
             if in_channels != out_channels:
                 self.down = Sequential(
-                    nn.Conv2d(in_channels, out_channels, 1),
+                    nn.Conv2d(in_channels, out_channels, (stride, 1)),
                     build_norm_layer(self.norm_cfg, out_channels)[1])
             else:
                 self.down = lambda x: x
@@ -94,10 +95,12 @@ class unit_gcn(BaseModule):
 
         if self.conv_pos == 'pre':
             x = self.conv(x)
+            n, c, t, v = x.shape
             x = x.view(n, self.num_subsets, -1, t, v)
             x = torch.einsum('nkctv,kvw->nctw', (x, A)).contiguous()
         elif self.conv_pos == 'post':
             x = torch.einsum('nctv,kvw->nkctw', (x, A)).contiguous()
+            n, k, c, t, v = x.shape
             x = x.view(n, -1, t, v)
             x = self.conv(x)
 
