@@ -126,7 +126,7 @@ class ResidualBlock(nn.Module):
         """Simple block wrapping Mamba block with normalization and residual connection."""
         super().__init__()
         
-        self.gcn = unit_gcn(in_channels, out_channels, A, stride=stride)
+        self.gcn = unit_gcn(in_channels, out_channels, A)
         self.mixer = MambaBlock(ModelArgs(d_model=out_channels*A.size(-1)))
         self.norm = RMSNorm(out_channels*A.size(-1))
 
@@ -136,6 +136,11 @@ class ResidualBlock(nn.Module):
             self.residual = lambda x: x
         else:
             self.residual = unit_skip(in_channels, out_channels, kernel_size=1, stride=stride)
+
+        if stride == 1:
+            self.t_down = lambda x: nn.Identity()
+        else:
+            self.t_down = nn.AvgPool2d((stride, 1))
         
 
     def forward(self, x):
@@ -149,6 +154,7 @@ class ResidualBlock(nn.Module):
 
         res1 = self.residual(x)
         x = self.gcn(x)
+        x = self.t_down(x)
         res2 = x
         N, C, T, V = x.size()
         x = rearrange(x, 'n c t v -> n t (v c)')
