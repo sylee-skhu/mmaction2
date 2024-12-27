@@ -4,8 +4,8 @@ model = dict(
     type='RecognizerGCN',
     backbone=dict(
         type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
-        d_model_base=16),
-    cls_head=dict(type='GCNHead', num_classes=60, in_channels=1600))
+        d_model_base=32),
+    cls_head=dict(type='GCNHead', num_classes=60, in_channels=2400, dropout=0.5))
 
 dataset_type = 'PoseDataset'
 ann_file = 'data/skeleton/ntu60_3d.pkl'

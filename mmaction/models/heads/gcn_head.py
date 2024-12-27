@@ -45,7 +45,8 @@ class GCNHead(BaseHead):
             self.dropout = None
 
         self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(self.in_channels, self.num_classes)
+        self.fc1 = nn.Linear(self.in_channels, self.in_channels//4)
+        self.fc = nn.Linear(self.in_channels//4, self.num_classes)
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """Forward features from the upstream network.
@@ -63,6 +64,11 @@ class GCNHead(BaseHead):
         x = x.view(N, M, C)
         x = x.mean(dim=1)
         assert x.shape[1] == self.in_channels
+
+        if self.dropout is not None:
+            x = self.dropout(x)
+
+        x = self.fc1(x)
 
         if self.dropout is not None:
             x = self.dropout(x)

@@ -71,21 +71,24 @@ class StoneMamba(BaseModule):
         self.l1 = ResidualBlock(d_model_base, d_model_base, A, residual=False)
         self.l2 = ResidualBlock(d_model_base, d_model_base, A)
         self.l3 = ResidualBlock(d_model_base, d_model_base, A)
-        self.l4 = ResidualBlock(d_model_base, d_model_base*2, A, stride=2)
-        self.l5 = ResidualBlock(d_model_base*2, d_model_base*2, A)
-        self.l6 = ResidualBlock(d_model_base*2, d_model_base*4, A, stride=2)
-        self.l7 = ResidualBlock(d_model_base*4, d_model_base*4, A)
+        self.l4 = ResidualBlock(d_model_base, d_model_base, A)
+        self.l5 = ResidualBlock(d_model_base, d_model_base*2, A, stride=2)
+        self.l6 = ResidualBlock(d_model_base*2, d_model_base*2, A)
+        self.l7 = ResidualBlock(d_model_base*2, d_model_base*2, A)
+        self.l8 = ResidualBlock(d_model_base*2, d_model_base*3, A, stride=2)
+        self.l9 = ResidualBlock(d_model_base*3, d_model_base*3, A)
+        self.l10 = ResidualBlock(d_model_base*3, d_model_base*3, A)
 
         self.first_tram = nn.Sequential(
                 nn.AvgPool2d((4,1)),
-                nn.Conv2d(d_model_base, d_model_base*4, 1),
-                nn.BatchNorm2d(d_model_base*4),
+                nn.Conv2d(d_model_base, d_model_base*3, 1),
+                nn.BatchNorm2d(d_model_base*3),
                 nn.ReLU()
             )
         self.second_tram = nn.Sequential(
                 nn.AvgPool2d((2,1)),
-                nn.Conv2d(d_model_base*2, d_model_base*4, 1),
-                nn.BatchNorm2d(d_model_base*4),
+                nn.Conv2d(d_model_base*2, d_model_base*3, 1),
+                nn.BatchNorm2d(d_model_base*3),
                 nn.ReLU()
             )
 
@@ -93,6 +96,9 @@ class StoneMamba(BaseModule):
         N, M, T, V, C = x.size()
         x = rearrange(x, 'n m t v c -> (n m t) v c').contiguous()
 
+
+        
+        
         
         x = self.p.to(x.device).expand(N*M*T, -1, -1) @ x   
 
@@ -106,12 +112,15 @@ class StoneMamba(BaseModule):
         x = self.l1(x)
         x = self.l2(x)
         x = self.l3(x)
-        x2 = x
         x = self.l4(x)
+        x2 = x
         x = self.l5(x)
-        x3 = x
         x = self.l6(x)
         x = self.l7(x)
+        x3 = x
+        x = self.l8(x)
+        x = self.l9(x)
+        x = self.l10(x)
         
         x2 = self.first_tram(x2)
         x3 = self.second_tram(x3)
@@ -128,21 +137,20 @@ class ResidualBlock(nn.Module):
         """Simple block wrapping Mamba block with normalization and residual connection."""
         super().__init__()
         
-        self.gcn = unit_gcn(in_channels, out_channels, A)
+        self.gcn = Shift_gcn(in_channels, out_channels, A)
+        self.tcn = unit_tcn(out_channels, out_channels, stride=stride)
         self.mixer = MambaBlock(ModelArgs(d_model=out_channels*A.size(-1)))
         self.norm = RMSNorm(out_channels*A.size(-1))
+        self.relu = nn.ReLU()
 
         if not residual:
             self.residual = lambda x: 0
         elif (in_channels == out_channels) and (stride == 1):
             self.residual = lambda x: x
         else:
-            self.residual = unit_skip(in_channels, out_channels, kernel_size=1, stride=stride)
-
-        if stride == 1:
-            self.t_down = nn.Identity()
-        else:
-            self.t_down = nn.AvgPool2d((stride, 1))
+            self.residual = unit_tcn(in_channels, out_channels, kernel_size=1, stride=stride)
+        
+            
         
 
     def forward(self, x):
@@ -154,33 +162,95 @@ class ResidualBlock(nn.Module):
             Tensor of shape (N, C, T, V)
         """
 
-        res1 = self.residual(x)
-        x = self.gcn(x)
-        x = self.t_down(x)
-        res2 = x
+        res = self.residual(x)
+        x = self.tcn(self.gcn(x))
         N, C, T, V = x.size()
         x = rearrange(x, 'n c t v -> n t (v c)')
         x = self.mixer(self.norm(x))
         x = rearrange(x, 'n t (v c) -> n c t v', v=V, c=C)
-        x = x + res1 + res2
-        return x
+        x = x + res
+        return self.relu(x)
 
-class unit_skip(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=9, stride=1):
-        super(unit_skip, self).__init__()
-        pad = int((kernel_size - 1) / 2)
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=(kernel_size, 1), padding=(pad, 0),stride=(stride, 1))
-        self.bn = nn.BatchNorm2d(out_channels)
+
+class Shift_gcn(nn.Module):
+    def __init__(self, in_channels, out_channels, A, coff_embedding=4, num_subset=3):
+        super(Shift_gcn, self).__init__()
+        
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        if in_channels != out_channels:
+            self.down = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 1),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.down = lambda x: x
+
+        num_joints = A.size(-1)
+        
+        self.Linear_weight = nn.Parameter(torch.zeros(in_channels, out_channels, requires_grad=True), requires_grad=True)
+        nn.init.normal_(self.Linear_weight, 0,math.sqrt(1.0/out_channels))
+
+        self.Linear_bias = nn.Parameter(torch.zeros(1,1,out_channels,requires_grad=True),requires_grad=True)
+        nn.init.constant_(self.Linear_bias, 0)
+
+        self.Feature_Mask = nn.Parameter(torch.ones(1,num_joints,in_channels, requires_grad=True),requires_grad=True)
+        nn.init.constant_(self.Feature_Mask, 0)
+
+        self.bn = nn.BatchNorm1d(num_joints*out_channels)
         self.relu = nn.ReLU()
-        nn.init.kaiming_normal_(self.conv.weight, mode='fan_out')
-        nn.init.constant_(self.conv.bias, 0)
-        nn.init.constant_(self.bn.weight, 1)
-        nn.init.constant_(self.bn.bias, 0)
 
-    def forward(self, x):
-        x = self.bn(self.conv(x))
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        index_array = np.empty(num_joints*in_channels).astype(np.int32)
+        for i in range(num_joints):
+            for j in range(in_channels):
+                index_array[i*in_channels + j] = (i*in_channels + j + j*in_channels)%(in_channels*25)
+        self.shift_in = torch.tensor(torch.from_numpy(index_array),requires_grad=False)
+
+        index_array = np.empty(num_joints*out_channels).astype(np.int32)
+        for i in range(num_joints):
+            for j in range(out_channels):
+                index_array[i*out_channels + j] = (i*out_channels + j - j*out_channels)%(out_channels*25)
+        self.shift_out = torch.tensor(torch.from_numpy(index_array),requires_grad=False)
+        
+
+    def forward(self, x0):
+
+        self.shift_in = self.shift_in.to(x0.device)
+        self.shift_out = self.shift_out.to(x0.device)
+        self.Feature_Mask = self.Feature_Mask.to(x0.device)
+        self.Linear_weight = self.Linear_weight.to(x0.device)
+        self.Linear_bias = self.Linear_bias.to(x0.device)
+
+        n, c, t, v = x0.size()
+        x = x0.permute(0,2,3,1).contiguous()
+
+        # shift1
+        x = x.view(n*t,v*c)
+        x = torch.index_select(x, 1, self.shift_in)
+        x = x.view(n*t,v,c)
+        x = x * (torch.tanh(self.Feature_Mask)+1)
+
+        x = torch.einsum('nwc,cd->nwd', (x, self.Linear_weight)).contiguous() # nt,v,c
+        x = x + self.Linear_bias
+
+        # shift2
+        x = x.view(n*t,-1) 
+        x = torch.index_select(x, 1, self.shift_out)
+        x = self.bn(x)
+        x = x.view(n,t,v,self.out_channels).permute(0,3,1,2) # n,c,t,v
+
+        x = x + self.down(x0)
+        x = self.relu(x)
         return x
-    
+        
 class MambaBlock(nn.Module):
     def __init__(self, args: ModelArgs):
         """A single Mamba block, as described in Figure 3 in Section 3.4 in the Mamba paper [1]."""
