@@ -13,7 +13,7 @@ from mmengine.model import BaseModule
 from mmaction.registry import MODELS
 from mmcv.cnn import ConvModule
 from ..utils import Graph, unit_gcn, mstcn, unit_tcn
-from timm.models.layers import Mlp, DropPath
+from timm.models.layers import Mlp, DropPath, trunc_normal_
 
 def import_class(name):
     components = name.split('.')
@@ -69,7 +69,7 @@ class StoneMamba(BaseModule):
         # Embedding        
         self.to_joint_embedding = nn.Linear(in_channels, d_model_base)
         self.pos_embedding = nn.Parameter(torch.randn(1, num_joint, d_model_base))
-        nn.trunc_normal_(self.pos_embedding, std=.02)
+        trunc_normal_(self.pos_embedding, std=.02)
 
         self.l1 = ResidualBlock(d_model_base, A)
         self.l2 = ResidualBlock(d_model_base, A)
@@ -135,16 +135,16 @@ class ResidualBlock(nn.Module):
         self.in_norm = nn.LayerNorm(in_channels)
         self.in_proj = nn.Linear(in_features=in_channels, out_features=2 * in_channels, bias=True)
         
-        self.compute_A1 = ConvModule(in_channels // (2 * 2), in_channels // (2 * 2), kernel_size=1, bias=True)
-        self.compute_A2 = ConvModule(in_channels // (2 * 2), in_channels // (2 * 2), kernel_size=1, bias=True)
+        self.compute_A1 = ConvModule(in_channels // 2, in_channels // 2, kernel_size=1, bias=True)
+        self.compute_A2 = ConvModule(in_channels // 2, in_channels // 2, kernel_size=1, bias=True)
 
-        self.tconv = nn.Conv2d(in_channels // (2 * 2), in_channels // (2 * 2), kernel_size=(9, 1),
+        self.tconv = nn.Conv2d(in_channels // 2, in_channels // 2, kernel_size=(9, 1),
                                padding=((9 - 1) // 2, 0), groups=8)
 
         self.mixer = MambaBlock(ModelArgs(d_model=in_channels*A.size(-1)))
         self.norm = RMSNorm(in_channels*A.size(-1))
 
-        self.out_proj = nn.Linear(in_features=in_channels, out_features=in_channels, bias=True)
+        self.out_proj = nn.Linear(in_features=in_channels*2, out_features=in_channels, bias=True)
         self.out_norm = nn.LayerNorm(in_channels)
         self.mlp = Mlp(in_features=in_channels, hidden_features=int(4 * in_channels),
                        act_layer=nn.GELU, drop=drop)
@@ -168,7 +168,7 @@ class ResidualBlock(nn.Module):
         x = x.permute(0, 2, 3, 1).contiguous() # N, T, V, C
         skip = x
 
-        x = self.in_proj(self.norm(x)).permute(0, 3, 1, 2).contiguous() # N, 2C, T, V
+        x = self.in_proj(self.in_norm(x)).permute(0, 3, 1, 2).contiguous() # N, 2C, T, V
 
         x_spatial, x_temporal, x_mamba = torch.split(x, [C // 2, C // 2, C], dim=1) # x_spatial: N, C/2, T, V | x_temporal: N, C/2, T, V | x_mamba: N, C, T, V
 
@@ -188,7 +188,7 @@ class ResidualBlock(nn.Module):
 
         # Mamba
         out_mamba = rearrange(x_mamba, 'n c t v -> n t (v c)')
-        out_mamba = self.mixer(self.norm(out_mamba)+out_mamba)
+        out_mamba = self.mixer(self.norm(out_mamba))+out_mamba
         out_mamba = rearrange(out_mamba, 'n t (v c) -> n c t v', v=V, c=C)
         out.append(out_mamba)
 
@@ -200,85 +200,6 @@ class ResidualBlock(nn.Module):
         
         return output
 
-
-class Shift_gcn(nn.Module):
-    def __init__(self, in_channels, out_channels, A, coff_embedding=4, num_subset=3):
-        super(Shift_gcn, self).__init__()
-        
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        if in_channels != out_channels:
-            self.down = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, 1),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.down = lambda x: x
-
-        num_joints = A.size(-1)
-        
-        self.Linear_weight = nn.Parameter(torch.zeros(in_channels, out_channels, requires_grad=True), requires_grad=True)
-        nn.init.normal_(self.Linear_weight, 0,math.sqrt(1.0/out_channels))
-
-        self.Linear_bias = nn.Parameter(torch.zeros(1,1,out_channels,requires_grad=True),requires_grad=True)
-        nn.init.constant_(self.Linear_bias, 0)
-
-        self.Feature_Mask = nn.Parameter(torch.ones(1,num_joints,in_channels, requires_grad=True),requires_grad=True)
-        nn.init.constant_(self.Feature_Mask, 0)
-
-        self.bn = nn.BatchNorm1d(num_joints*out_channels)
-        self.relu = nn.ReLU()
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out')
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-        index_array = np.empty(num_joints*in_channels).astype(np.int32)
-        for i in range(num_joints):
-            for j in range(in_channels):
-                index_array[i*in_channels + j] = (i*in_channels + j + j*in_channels)%(in_channels*25)
-        self.shift_in = torch.tensor(torch.from_numpy(index_array),requires_grad=False)
-
-        index_array = np.empty(num_joints*out_channels).astype(np.int32)
-        for i in range(num_joints):
-            for j in range(out_channels):
-                index_array[i*out_channels + j] = (i*out_channels + j - j*out_channels)%(out_channels*25)
-        self.shift_out = torch.tensor(torch.from_numpy(index_array),requires_grad=False)
-        
-
-    def forward(self, x0):
-
-        self.shift_in = self.shift_in.to(x0.device)
-        self.shift_out = self.shift_out.to(x0.device)
-        self.Feature_Mask = self.Feature_Mask.to(x0.device)
-        self.Linear_weight = self.Linear_weight.to(x0.device)
-        self.Linear_bias = self.Linear_bias.to(x0.device)
-
-        n, c, t, v = x0.size()
-        x = x0.permute(0,2,3,1).contiguous()
-
-        # shift1
-        x = x.view(n*t,v*c)
-        x = torch.index_select(x, 1, self.shift_in)
-        x = x.view(n*t,v,c)
-        x = x * (torch.tanh(self.Feature_Mask)+1)
-
-        x = torch.einsum('nwc,cd->nwd', (x, self.Linear_weight)).contiguous() # nt,v,c
-        x = x + self.Linear_bias
-
-        # shift2
-        x = x.view(n*t,-1) 
-        x = torch.index_select(x, 1, self.shift_out)
-        x = self.bn(x)
-        x = x.view(n,t,v,self.out_channels).permute(0,3,1,2) # n,c,t,v
-
-        x = x + self.down(x0)
-        x = self.relu(x)
-        return x
         
 class MambaBlock(nn.Module):
     def __init__(self, args: ModelArgs):
