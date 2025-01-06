@@ -15,14 +15,15 @@ _base_ = '../../_base_/default_runtime.py'
 # window_size = [[2, 25], [2, 25], [2, 25], [8, 25]]
 # val 83.67@16 | test 84.04
 # val 81.36@16 | test 81.74 <- drop_rate 0.5, attn_drop_rate 0.0
-# val @ | test <- drop_rate 0.0, attn_drop_rate 0.5
+# val 83.30@14 | test 83.65 <- drop_rate 0.0, attn_drop_rate 0.5
+# val @ | test <- data batchnorm
 
 model = dict(
     type='RecognizerGCN',
     backbone=dict(
         type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
         dim=80, in_dim=32, depths=[1, 3, 8, 4], window_size=[[2, 25], [2, 25], [2, 25], [8, 25]], mlp_ratio=4, num_heads=[2, 4, 8, 16],
-        drop_path_rate=0.2, drop_rate=0.0, attn_drop_rate=0.5,),
+        drop_path_rate=0.2, drop_rate=0.0, attn_drop_rate=0.0,),
     cls_head=dict(type='GCNHead', num_classes=60, in_channels=640))
 
 dataset_type = 'PoseDataset'

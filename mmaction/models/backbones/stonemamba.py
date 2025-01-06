@@ -17,6 +17,8 @@ from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
 from timm.layers import trunc_normal_, DropPath, LayerNorm2d
 from timm.models.vision_transformer import Mlp, PatchEmbed
 
+from ..utils import Graph
+
 
 def window_partition(x, window_size):
     """
@@ -517,6 +519,11 @@ class StoneMamba(BaseModule):
             layer_scale_conv: conv layer scaling coefficient.
         """
         super().__init__(init_cfg=init_cfg)
+        self.graph = Graph(**graph_cfg)
+        A = torch.tensor(self.graph.A, dtype=torch.float32, requires_grad=False)
+        self.register_buffer('A', A)
+        self.data_bn = nn.BatchNorm1d(num_person * in_chans * A.size(1))
+
         num_features = int(dim * 2 ** (len(depths) - 1))
         self.patch_embed = PatchEmbed(in_chans=in_chans, in_dim=in_dim, dim=dim)
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
@@ -557,6 +564,9 @@ class StoneMamba(BaseModule):
         elif isinstance(m, nn.BatchNorm2d):
             nn.init.ones_(m.weight)
             nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm1d):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
 
     @torch.jit.ignore
     def no_weight_decay_keywords(self):
@@ -565,7 +575,11 @@ class StoneMamba(BaseModule):
     def forward(self, x):
         N, M, T, V, C = x.shape
 
-        x = rearrange(x, 'n m t v c -> (n m) c t v').contiguous()
+        x = rearrange(x, 'n m t v c ->  n (m v c) t').contiguous()
+        x = self.data_bn(x)
+        x = rearrange(x, ' n (m v c) t -> (n m) c t v', m=M, v=V).contiguous()
+
+        # x = rearrange(x, 'n m t v c -> (n m) c t v').contiguous()
         x = self.patch_embed(x)
         # print(x.shape)
         for level in self.levels:
@@ -583,11 +597,13 @@ if __name__ == '__main__':
         dim=80,
         in_dim=32,
         depths=[1, 3, 8, 4],
-        window_size=[[64, 25], [32, 25], [16, 25], [8, 25]],
+        window_size=[[2, 25], [2, 25], [2, 25], [8, 25]],
         mlp_ratio=4,
         num_heads=[2, 4, 8, 16],
         graph_cfg=dict(layout='nturgb+d', mode='spatial'),
-        drop_path_rate=0.2
+        drop_path_rate=0.2,
+        drop_rate=0.0,
+        attn_drop_rate=0.0
     ).cuda().eval()
 
     N, M, T, V, C = (1, 2, 64, 25, 3)
