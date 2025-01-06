@@ -1,11 +1,29 @@
 _base_ = '../../_base_/default_runtime.py'
 
+# window_size = [[2, 25], [2, 25], [2, 25], [1, 25]]
+# val 83.56@15 | test 83.93
+
+# window_size = [[16, 25], [8, 25], [4, 25], [2, 25]]
+# val 83.04@15 | test 83.76
+
+# window_size = [[64, 25], [32, 25], [16, 25], [8, 25]]
+# val 81.95@15 | test 82.45
+
+# window_size = [[8, 25], [8, 25], [8, 25], [8, 25]]
+# val 82.89@16 | test 83.23
+
+# window_size = [[2, 25], [2, 25], [2, 25], [8, 25]]
+# val 83.67@16 | test 84.04
+# val 81.36@16 | test 81.74 <- drop_rate 0.5, attn_drop_rate 0.0
+# val @ | test <- drop_rate 0.0, attn_drop_rate 0.5
+
 model = dict(
     type='RecognizerGCN',
     backbone=dict(
         type='StoneMamba', graph_cfg=dict(layout='nturgb+d', mode='spatial'),
-        d_model_base=32),
-    cls_head=dict(type='GCNHead', num_classes=60, in_channels=800))
+        dim=80, in_dim=32, depths=[1, 3, 8, 4], window_size=[[2, 25], [2, 25], [2, 25], [8, 25]], mlp_ratio=4, num_heads=[2, 4, 8, 16],
+        drop_path_rate=0.2, drop_rate=0.0, attn_drop_rate=0.5,),
+    cls_head=dict(type='GCNHead', num_classes=60, in_channels=640))
 
 dataset_type = 'PoseDataset'
 ann_file = 'data/skeleton/ntu60_3d.pkl'
@@ -92,9 +110,8 @@ param_scheduler = [
 
 optim_wrapper = dict(
     optimizer=dict(
-        type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005),
-        clip_grad=dict(max_norm=40, norm_type=2))
-
+        type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005, nesterov=True),
+    clip_grad=dict(max_norm=40, norm_type=2))
 default_hooks = dict(checkpoint=dict(interval=1), logger=dict(interval=100))
 
 # Default setting for scaling LR automatically
