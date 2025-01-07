@@ -16,7 +16,7 @@ _base_ = '../../_base_/default_runtime.py'
 # val 83.67@16 | test 84.04
 # val 81.36@16 | test 81.74 <- drop_rate 0.5, attn_drop_rate 0.0
 # val 83.30@14 | test 83.65 <- drop_rate 0.0, attn_drop_rate 0.5
-# val 83.98@16 | test 84.38 <- data batchnorm
+# val 83.98@16 | test 84.38 <- data batchnorm # 84.75@15/85.05 ComputeAMatrix
 
 model = dict(
     type='RecognizerGCN',

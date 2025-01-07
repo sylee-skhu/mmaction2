@@ -96,7 +96,7 @@ class PatchEmbed(nn.Module):
     Patch embedding block"
     """
 
-    def __init__(self, in_chans=3, in_dim=64, dim=96):
+    def __init__(self, A, in_chans=3, in_dim=64, dim=96):
         """
         Args:
             in_chans: number of input channels.
@@ -110,20 +110,22 @@ class PatchEmbed(nn.Module):
         stride = 1
         pad = (kernel_size + (kernel_size - 1) * (dilation - 1) - 1) // 2
         self.conv_down = nn.Sequential(
-            nn.Conv2d(in_chans, in_dim,
+            nn.Conv2d(in_chans, in_dim * A.size(0),
                       kernel_size=(kernel_size, 1),
                       padding=(pad, 0),
                       stride=(stride, 1),
                       dilation=(dilation, 1),
                       bias=False),
+            ComputeAMatrix(A),
             nn.BatchNorm2d(in_dim, eps=1e-4),
             nn.ReLU(),
-            nn.Conv2d(in_dim, dim,
+            nn.Conv2d(in_dim, dim * A.size(0),
                       kernel_size=(kernel_size, 1),
                       padding=(pad, 0),
                       stride=(stride, 1),
                       dilation=(dilation, 1),
                       bias=False),
+            ComputeAMatrix(A),
             nn.BatchNorm2d(dim, eps=1e-4),
             nn.ReLU()
         )
@@ -131,6 +133,22 @@ class PatchEmbed(nn.Module):
     def forward(self, x):
         x = self.proj(x)
         x = self.conv_down(x)
+        return x
+
+
+class ComputeAMatrix(nn.Module):
+    def __init__(self, A):
+        super().__init__()
+        self.register_buffer('A', A)
+        self.PA = nn.Parameter(A.clone())
+        nn.init.constant_(self.PA, 1)
+        self.num_subsets = A.size(0)
+
+    def forward(self, x):
+        A = self.A * self.PA
+        n, c, t, v = x.shape
+        x = x.view(n, self.num_subsets, -1, t, v)
+        x = torch.einsum('nkctv,kvw->nctw', (x, A)).contiguous()
         return x
 
 
@@ -521,11 +539,10 @@ class StoneMamba(BaseModule):
         super().__init__(init_cfg=init_cfg)
         self.graph = Graph(**graph_cfg)
         A = torch.tensor(self.graph.A, dtype=torch.float32, requires_grad=False)
-        self.register_buffer('A', A)
         self.data_bn = nn.BatchNorm1d(num_person * in_chans * A.size(1))
 
         num_features = int(dim * 2 ** (len(depths) - 1))
-        self.patch_embed = PatchEmbed(in_chans=in_chans, in_dim=in_dim, dim=dim)
+        self.patch_embed = PatchEmbed(A=A.clone(), in_chans=in_chans, in_dim=in_dim, dim=dim)
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
         self.levels = nn.ModuleList()
         for i in range(len(depths)):
