@@ -179,6 +179,9 @@ class Graph:
         self.self_link = [(i, i) for i in range(self.num_node)]
         self.outward = [(j, i) for (i, j) in self.inward]
         self.neighbor = self.inward + self.outward
+        self.A_outward_binary = edge2mat(self.outward, self.num_node)
+        self.A_inward_binary = edge2mat(self.inward, self.num_node)
+        self.A_neighbor = edge2mat(self.neighbor, self.num_node)
 
     def stgcn_spatial(self) -> np.ndarray:
         """ST-GCN spatial mode."""
